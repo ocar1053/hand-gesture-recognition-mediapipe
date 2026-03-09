@@ -4,6 +4,7 @@ import csv
 import copy
 import argparse
 import itertools
+import time
 from collections import Counter
 from collections import deque
 
@@ -12,6 +13,7 @@ import numpy as np
 import mediapipe as mp
 
 from utils import CvFpsCalc
+from utils import RosbridgePublisher
 from model import KeyPointClassifier
 from model import PointHistoryClassifier
 
@@ -32,6 +34,12 @@ def get_args():
                         help='min_tracking_confidence',
                         type=int,
                         default=0.5)
+    parser.add_argument('--rosbridge_enable', action='store_true')
+    parser.add_argument('--rosbridge_host', type=str, default='192.168.75.29')
+    parser.add_argument('--rosbridge_port', type=int, default=9090)
+    parser.add_argument('--rosbridge_topic',
+                        type=str,
+                        default='/mediapipe/hands')
 
     args = parser.parse_args()
 
@@ -49,6 +57,10 @@ def main():
     use_static_image_mode = args.use_static_image_mode
     min_detection_confidence = args.min_detection_confidence
     min_tracking_confidence = args.min_tracking_confidence
+    rosbridge_enable = args.rosbridge_enable
+    rosbridge_host = args.rosbridge_host
+    rosbridge_port = args.rosbridge_port
+    rosbridge_topic = args.rosbridge_topic
 
     use_brect = True
 
@@ -85,6 +97,21 @@ def main():
             row[0] for row in point_history_classifier_labels
         ]
 
+    rosbridge_publisher = None
+    if rosbridge_enable:
+        try:
+            rosbridge_publisher = RosbridgePublisher(
+                host=rosbridge_host,
+                port=rosbridge_port,
+                topic=rosbridge_topic,
+            )
+            print(
+                f'Publishing MediaPipe Hands results to rosbridge at '
+                f'ws://{rosbridge_host}:{rosbridge_port} on {rosbridge_topic}'
+            )
+        except RuntimeError as exc:
+            print(f'Failed to initialize rosbridge publisher: {exc}')
+
     # FPS Measurement ########################################################
     cvFpsCalc = CvFpsCalc(buffer_len=10)
 
@@ -120,6 +147,11 @@ def main():
         image.flags.writeable = False
         results = hands.process(image)
         image.flags.writeable = True
+
+        if rosbridge_publisher is not None:
+            rosbridge_publisher.publish(
+                build_mediapipe_payload(results, min_detection_confidence,
+                                        min_tracking_confidence))
 
         #  ####################################################################
         if results.multi_hand_landmarks is not None:
@@ -178,6 +210,8 @@ def main():
         cv.imshow('Hand Gesture Recognition', debug_image)
 
     cap.release()
+    if rosbridge_publisher is not None:
+        rosbridge_publisher.close()
     cv.destroyAllWindows()
 
 
@@ -226,6 +260,39 @@ def calc_landmark_list(image, landmarks):
         landmark_point.append([landmark_x, landmark_y])
 
     return landmark_point
+
+
+def build_mediapipe_payload(results, min_detection_confidence,
+                           min_tracking_confidence):
+    payload = {
+        'detected': results.multi_hand_landmarks is not None,
+        # 'multi_handedness': [],
+        'multi_hand_landmarks': [],
+    }
+
+    # if results.multi_handedness is not None:
+    #     for handedness in results.multi_handedness:
+    #         payload['multi_handedness'].append({
+    #             'classification': [{
+    #                 'index': c.index,
+    #                 'label': c.label,
+    #                 'score': float(c.score),
+    #             } for c in handedness.classification]
+    #         })
+
+    if results.multi_hand_landmarks is not None:
+        for hand_landmarks in results.multi_hand_landmarks:
+            payload['multi_hand_landmarks'].append({
+                'landmark': [{
+                    'x': float(landmark.x),
+                    'y': float(landmark.y),
+                    # 'z': float(landmark.z),
+                } for landmark in hand_landmarks.landmark]
+            })
+
+  
+
+    return payload
 
 
 def pre_process_landmark(landmark_list):
