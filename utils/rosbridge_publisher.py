@@ -3,7 +3,7 @@ import json
 
 class RosbridgePublisher:
     def __init__(self,
-                 host='192.168.75.29',
+                 host='localhost',
                  port=9090,
                  topic='/mediapipe/hands'):
         try:

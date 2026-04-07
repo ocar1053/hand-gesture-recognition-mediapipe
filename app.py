@@ -10,12 +10,16 @@ from collections import deque
 
 import cv2 as cv
 import numpy as np
-import mediapipe as mp
 
 from utils import CvFpsCalc
 from utils import RosbridgePublisher
 from model import KeyPointClassifier
 from model import PointHistoryClassifier
+from Gripper_Skeleton.filter import MultiHandFilter
+from Gripper_Skeleton.realtime_hand_skeleton import (
+    MediaPipeHandTracker,
+    WiLoRMiniHandTracker,
+)
 
 
 def get_args():
@@ -35,11 +39,25 @@ def get_args():
                         type=int,
                         default=0.5)
     parser.add_argument('--rosbridge_enable', action='store_true')
-    parser.add_argument('--rosbridge_host', type=str, default='192.168.75.29')
+    parser.add_argument('--rosbridge_host', type=str, default='localhost')
     parser.add_argument('--rosbridge_port', type=int, default=9090)
     parser.add_argument('--rosbridge_topic',
                         type=str,
                         default='/mediapipe/hands')
+    parser.add_argument(
+        '--backend',
+        type=str,
+        default='mediapipe',
+        choices=['mediapipe', 'wilor-mini'],
+        help='Hand tracking backend',
+    )
+    parser.add_argument(
+        '--filter',
+        type=str,
+        default='none',
+        choices=['none', 'ema', 'oneeuro', 'kalman'],
+        help='Temporal smoothing filter',
+    )
 
     args = parser.parse_args()
 
@@ -61,6 +79,8 @@ def main():
     rosbridge_host = args.rosbridge_host
     rosbridge_port = args.rosbridge_port
     rosbridge_topic = args.rosbridge_topic
+    backend = args.backend
+    filter_type = args.filter
 
     use_brect = True
 
@@ -69,14 +89,18 @@ def main():
     cap.set(cv.CAP_PROP_FRAME_WIDTH, cap_width)
     cap.set(cv.CAP_PROP_FRAME_HEIGHT, cap_height)
 
-    # Model load #############################################################
-    mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands(
-        static_image_mode=use_static_image_mode,
-        max_num_hands=1,
-        min_detection_confidence=min_detection_confidence,
-        min_tracking_confidence=min_tracking_confidence,
-    )
+    # Tracker + Filter load #############################################################
+    if backend == 'mediapipe':
+        tracker = MediaPipeHandTracker(
+            max_num_hands=1,
+            min_detection_conf=min_detection_confidence,
+            min_tracking_conf=min_tracking_confidence,
+        )
+    else:
+        tracker = WiLoRMiniHandTracker()
+
+    filter_manager = MultiHandFilter(filter_type=filter_type)
+    print(f'Backend: {backend} | Filter: {filter_type}')
 
     keypoint_classifier = KeyPointClassifier()
 
@@ -141,26 +165,24 @@ def main():
         image = cv.flip(image, 1)  # Mirror display
         debug_image = copy.deepcopy(image)
 
-        # Detection implementation #############################################################
-        image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
-
-        image.flags.writeable = False
-        results = hands.process(image)
-        image.flags.writeable = True
+        # Detection + Filter #############################################################
+        # tracker.predict() accepts BGR image and returns List[(keypoints(21,2), label)]
+        raw_predictions = tracker.predict(debug_image)
+        predictions = filter_manager.apply(raw_predictions)
+        filter_manager.update_freq(fps)
 
         if rosbridge_publisher is not None:
+            h, w = debug_image.shape[:2]
             rosbridge_publisher.publish(
-                build_mediapipe_payload(results, min_detection_confidence,
-                                        min_tracking_confidence))
+                build_keypoints_payload(raw_predictions, w, h))
 
         #  ####################################################################
-        if results.multi_hand_landmarks is not None:
-            for hand_landmarks, handedness in zip(results.multi_hand_landmarks,
-                                                  results.multi_handedness):
-                # Bounding box calculation
-                brect = calc_bounding_rect(debug_image, hand_landmarks)
-                # Landmark calculation
-                landmark_list = calc_landmark_list(debug_image, hand_landmarks)
+        if predictions:
+            for keypoints, label in predictions:
+                # keypoints is ndarray (21, 2) in pixel coords
+                landmark_list = np.rint(keypoints[:, :2]).astype(np.int32).tolist()
+                # Bounding box
+                brect = calc_bounding_rect_from_array(keypoints)
 
                 # Conversion to relative coordinates / normalized coordinates
                 pre_processed_landmark_list = pre_process_landmark(
@@ -196,7 +218,7 @@ def main():
                 debug_image = draw_info_text(
                     debug_image,
                     brect,
-                    handedness,
+                    label,
                     keypoint_classifier_labels[hand_sign_id],
                     point_history_classifier_labels[most_common_fg_id[0][0]],
                 )
@@ -209,6 +231,7 @@ def main():
         # Screen reflection #############################################################
         cv.imshow('Hand Gesture Recognition', debug_image)
 
+    tracker.close()
     cap.release()
     if rosbridge_publisher is not None:
         rosbridge_publisher.close()
@@ -246,6 +269,13 @@ def calc_bounding_rect(image, landmarks):
     return [x, y, x + w, y + h]
 
 
+def calc_bounding_rect_from_array(keypoints: np.ndarray):
+    """Compute bounding rect from (21, 2) numpy keypoints array."""
+    pts = keypoints[:, :2].astype(np.int32)
+    x, y, w, h = cv.boundingRect(pts)
+    return [x, y, x + w, y + h]
+
+
 def calc_landmark_list(image, landmarks):
     image_width, image_height = image.shape[1], image.shape[0]
 
@@ -262,36 +292,25 @@ def calc_landmark_list(image, landmarks):
     return landmark_point
 
 
-def build_mediapipe_payload(results, min_detection_confidence,
-                           min_tracking_confidence):
+def build_keypoints_payload(predictions, image_width, image_height):
+    """Build rosbridge-compatible payload from tracker predictions.
+    predictions: List[(keypoints(21,2|3), label)]
+    Normalises pixel coords to 0-1 range, preserves real z when available,
+    and includes handedness label per detected hand when available.
+    """
     payload = {
-        'detected': results.multi_hand_landmarks is not None,
-        # 'multi_handedness': [],
+        'detected': len(predictions) > 0,
         'multi_hand_landmarks': [],
     }
-
-    # if results.multi_handedness is not None:
-    #     for handedness in results.multi_handedness:
-    #         payload['multi_handedness'].append({
-    #             'classification': [{
-    #                 'index': c.index,
-    #                 'label': c.label,
-    #                 'score': float(c.score),
-    #             } for c in handedness.classification]
-    #         })
-
-    if results.multi_hand_landmarks is not None:
-        for hand_landmarks in results.multi_hand_landmarks:
-            payload['multi_hand_landmarks'].append({
-                'landmark': [{
-                    'x': float(landmark.x),
-                    'y': float(landmark.y),
-                    # 'z': float(landmark.z),
-                } for landmark in hand_landmarks.landmark]
-            })
-
-  
-
+    for keypoints, label in predictions:
+        payload['multi_hand_landmarks'].append({
+            'label': label,
+            'landmark': [{
+                'x': float(pt[0]) / max(image_width, 1),
+                'y': float(pt[1]) / max(image_height, 1),
+                'z': float(pt[2]) if len(pt) > 2 else 0.0,
+            } for pt in keypoints]
+        })
     return payload
 
 
@@ -558,12 +577,16 @@ def draw_bounding_rect(use_brect, image, brect):
     return image
 
 
-def draw_info_text(image, brect, handedness, hand_sign_text,
+def draw_info_text(image, brect, handedness_or_label, hand_sign_text,
                    finger_gesture_text):
     cv.rectangle(image, (brect[0], brect[1]), (brect[2], brect[1] - 22),
                  (0, 0, 0), -1)
 
-    info_text = handedness.classification[0].label[0:]
+    # Accept either a mediapipe handedness object or a plain string label
+    if isinstance(handedness_or_label, str):
+        info_text = handedness_or_label
+    else:
+        info_text = handedness_or_label.classification[0].label[0:]
     if hand_sign_text != "":
         info_text = info_text + ':' + hand_sign_text
     cv.putText(image, info_text, (brect[0] + 5, brect[1] - 4),
