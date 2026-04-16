@@ -58,6 +58,11 @@ def get_args():
         choices=['none', 'ema', 'oneeuro', 'kalman'],
         help='Temporal smoothing filter',
     )
+    parser.add_argument(
+        '--gesture_classifier_enable',
+        action='store_true',
+        help='Load gesture classifiers (paper/stone/scissor and point history).',
+    )
 
     args = parser.parse_args()
 
@@ -81,6 +86,7 @@ def main():
     rosbridge_topic = args.rosbridge_topic
     backend = args.backend
     filter_type = args.filter
+    gesture_classifier_enable = args.gesture_classifier_enable
 
     use_brect = True
 
@@ -102,24 +108,28 @@ def main():
     filter_manager = MultiHandFilter(filter_type=filter_type)
     print(f'Backend: {backend} | Filter: {filter_type}')
 
-    keypoint_classifier = KeyPointClassifier()
+    keypoint_classifier = None
+    point_history_classifier = None
+    keypoint_classifier_labels = []
+    point_history_classifier_labels = []
+    if gesture_classifier_enable:
+        keypoint_classifier = KeyPointClassifier()
+        point_history_classifier = PointHistoryClassifier()
 
-    point_history_classifier = PointHistoryClassifier()
-
-    # Read labels ###########################################################
-    with open('model/keypoint_classifier/keypoint_classifier_label.csv',
-              encoding='utf-8-sig') as f:
-        keypoint_classifier_labels = csv.reader(f)
-        keypoint_classifier_labels = [
-            row[0] for row in keypoint_classifier_labels
-        ]
-    with open(
-            'model/point_history_classifier/point_history_classifier_label.csv',
-            encoding='utf-8-sig') as f:
-        point_history_classifier_labels = csv.reader(f)
-        point_history_classifier_labels = [
-            row[0] for row in point_history_classifier_labels
-        ]
+        # Read labels #######################################################
+        with open('model/keypoint_classifier/keypoint_classifier_label.csv',
+                  encoding='utf-8-sig') as f:
+            keypoint_classifier_labels = csv.reader(f)
+            keypoint_classifier_labels = [
+                row[0] for row in keypoint_classifier_labels
+            ]
+        with open(
+                'model/point_history_classifier/point_history_classifier_label.csv',
+                encoding='utf-8-sig') as f:
+            point_history_classifier_labels = csv.reader(f)
+            point_history_classifier_labels = [
+                row[0] for row in point_history_classifier_labels
+            ]
 
     rosbridge_publisher = None
     if rosbridge_enable:
@@ -138,6 +148,11 @@ def main():
 
     # FPS Measurement ########################################################
     cvFpsCalc = CvFpsCalc(buffer_len=10)
+
+    if gesture_classifier_enable:
+        print('Gesture classifiers enabled.')
+    else:
+        print('Gesture classifiers disabled; hand tracking only.')
 
     # Coordinate history #################################################################
     history_length = 16
@@ -193,24 +208,32 @@ def main():
                 logging_csv(number, mode, pre_processed_landmark_list,
                             pre_processed_point_history_list)
 
-                # Hand sign classification
-                hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
-                if hand_sign_id == 2:  # Point gesture
-                    point_history.append(landmark_list[8])
+                hand_sign_text = ''
+                finger_gesture_text = ''
+                if gesture_classifier_enable:
+                    # Hand sign classification
+                    hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+                    if hand_sign_id == 2:  # Point gesture
+                        point_history.append(landmark_list[8])
+                    else:
+                        point_history.append([0, 0])
+
+                    # Finger gesture classification
+                    finger_gesture_id = 0
+                    point_history_len = len(pre_processed_point_history_list)
+                    if point_history_len == (history_length * 2):
+                        finger_gesture_id = point_history_classifier(
+                            pre_processed_point_history_list)
+
+                    # Calculates the gesture IDs in the latest detection
+                    finger_gesture_history.append(finger_gesture_id)
+                    most_common_fg_id = Counter(
+                        finger_gesture_history).most_common()
+                    hand_sign_text = keypoint_classifier_labels[hand_sign_id]
+                    finger_gesture_text = (
+                        point_history_classifier_labels[most_common_fg_id[0][0]])
                 else:
                     point_history.append([0, 0])
-
-                # Finger gesture classification
-                finger_gesture_id = 0
-                point_history_len = len(pre_processed_point_history_list)
-                if point_history_len == (history_length * 2):
-                    finger_gesture_id = point_history_classifier(
-                        pre_processed_point_history_list)
-
-                # Calculates the gesture IDs in the latest detection
-                finger_gesture_history.append(finger_gesture_id)
-                most_common_fg_id = Counter(
-                    finger_gesture_history).most_common()
 
                 # Drawing part
                 debug_image = draw_bounding_rect(use_brect, debug_image, brect)
@@ -219,8 +242,8 @@ def main():
                     debug_image,
                     brect,
                     label,
-                    keypoint_classifier_labels[hand_sign_id],
-                    point_history_classifier_labels[most_common_fg_id[0][0]],
+                    hand_sign_text,
+                    finger_gesture_text,
                 )
         else:
             point_history.append([0, 0])
