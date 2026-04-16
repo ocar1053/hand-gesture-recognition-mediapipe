@@ -11,3 +11,13 @@ matplotlib>=3.3.2
 
 # Optional: only if you want to publish MediaPipe output to rosbridge
 roslibpy>=1.8.1
+opencv-python
+numpy
+mediapipe
+ultralytics
+git+https://github.com/warmshao/WiLoR-mini
+dill
+timm
+einops
+scipy
+tqdm
