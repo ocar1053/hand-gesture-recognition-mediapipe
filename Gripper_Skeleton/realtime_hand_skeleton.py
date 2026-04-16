@@ -280,22 +280,139 @@ def draw_hand_skeleton(
 
 
 class MediaPipeHandTracker:
-    def __init__(self, max_num_hands=1, min_detection_conf=0.5, min_tracking_conf=0.5):
+    def __init__(
+        self,
+        max_num_hands=1,
+        min_detection_conf=0.5,
+        min_tracking_conf=0.5,
+        static_image_mode=False,
+        delegate="cpu",
+        task_model_path="",
+    ):
         import mediapipe as mp
 
         self.mp = mp
-        self.hands = mp.solutions.hands.Hands(
-            static_image_mode=False,
-            max_num_hands=max_num_hands,
-            min_detection_confidence=min_detection_conf,
-            min_tracking_confidence=min_tracking_conf,
+        self.delegate = delegate.lower()
+        self.max_num_hands = max_num_hands
+        self.min_detection_conf = min_detection_conf
+        self.min_tracking_conf = min_tracking_conf
+        self.static_image_mode = static_image_mode
+        self.task_model_path = self._resolve_task_model_path(task_model_path)
+        self.hands = None
+        self.landmarker = None
+        self.tracker_mode = "solutions-cpu"
+        self._last_timestamp_ms = 0
+
+        if self.delegate == "gpu":
+            try:
+                self._init_tasks_tracker()
+                self.tracker_mode = "tasks-gpu"
+                print(
+                    f"MediaPipe tracker: tasks GPU delegate "
+                    f"({self.task_model_path})"
+                )
+            except Exception as exc:
+                print(
+                    f"MediaPipe GPU requested but unavailable: {exc}. "
+                    "Falling back to MediaPipe solutions CPU."
+                )
+                self._init_solutions_tracker()
+        else:
+            self._init_solutions_tracker()
+            print("MediaPipe tracker: solutions CPU.")
+
+    def _resolve_task_model_path(self, task_model_path: str) -> str:
+        if task_model_path:
+            return str(Path(task_model_path).expanduser())
+
+        candidates = [
+            Path.cwd() / "hand_landmarker.task",
+            Path(__file__).resolve().parent.parent / "hand_landmarker.task",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        return ""
+
+    def _init_solutions_tracker(self) -> None:
+        self.hands = self.mp.solutions.hands.Hands(
+            static_image_mode=self.static_image_mode,
+            max_num_hands=self.max_num_hands,
+            min_detection_confidence=self.min_detection_conf,
+            min_tracking_confidence=self.min_tracking_conf,
         )
+
+    def _init_tasks_tracker(self) -> None:
+        if not self.task_model_path:
+            raise FileNotFoundError(
+                "hand_landmarker.task not found. Pass --mediapipe_task_model "
+                "or place the file in the project root."
+            )
+
+        tasks = self.mp.tasks
+        vision = tasks.vision
+        base_options = tasks.BaseOptions(
+            model_asset_path=self.task_model_path,
+            delegate=tasks.BaseOptions.Delegate.GPU,
+        )
+        options = vision.HandLandmarkerOptions(
+            base_options=base_options,
+            running_mode=vision.RunningMode.VIDEO,
+            num_hands=self.max_num_hands,
+            min_hand_detection_confidence=self.min_detection_conf,
+            min_hand_presence_confidence=self.min_detection_conf,
+            min_tracking_confidence=self.min_tracking_conf,
+        )
+        self.landmarker = vision.HandLandmarker.create_from_options(options)
+
+    def _next_timestamp_ms(self) -> int:
+        now_ms = int(time.monotonic() * 1000)
+        self._last_timestamp_ms = max(self._last_timestamp_ms + 1, now_ms)
+        return self._last_timestamp_ms
+
+    def _predict_with_tasks(
+        self,
+        bgr_image: np.ndarray,
+    ) -> List[Tuple[np.ndarray, str]]:
+        rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
+        mp_image = self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=rgb)
+        results = self.landmarker.detect_for_video(
+            mp_image, self._next_timestamp_ms()
+        )
+
+        outputs = []
+        if results.hand_landmarks:
+            h, w = bgr_image.shape[:2]
+            handedness_list = results.handedness or []
+            for idx, hand_landmarks in enumerate(results.hand_landmarks):
+                pts = []
+                for lm in hand_landmarks:
+                    x = int(lm.x * w)
+                    y = int(lm.y * h)
+                    pts.append([float(x), float(y), float(lm.z)])
+
+                label = ""
+                score = 0.0
+                if idx < len(handedness_list) and handedness_list[idx]:
+                    category = handedness_list[idx][0]
+                    label = (
+                        getattr(category, "category_name", "")
+                        or getattr(category, "display_name", "")
+                    )
+                    score = float(getattr(category, "score", 0.0))
+
+                outputs.append((np.array(pts, dtype=np.float32), label, score))
+
+        return suppress_duplicate_hands(outputs)
 
     def predict(self, bgr_image: np.ndarray) -> List[Tuple[np.ndarray, str]]:
         """
         Return: list of (keypoints_xyz, label)
         keypoints_xyz: (21, 3), where xy are pixel coordinates and z is MediaPipe depth
         """
+        if self.landmarker is not None:
+            return self._predict_with_tasks(bgr_image)
+
         rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb)
 
@@ -322,7 +439,10 @@ class MediaPipeHandTracker:
         return suppress_duplicate_hands(outputs)
 
     def close(self):
-        self.hands.close()
+        if self.landmarker is not None:
+            self.landmarker.close()
+        if self.hands is not None:
+            self.hands.close()
 
 
 class WiLoRMiniHandTracker:
@@ -375,9 +495,16 @@ class WiLoRMiniHandTracker:
         pass
 
 
-def build_tracker(backend: str):
+def build_tracker(
+    backend: str,
+    mediapipe_delegate: str = "cpu",
+    mediapipe_task_model: str = "",
+):
     if backend == "mediapipe":
-        return MediaPipeHandTracker()
+        return MediaPipeHandTracker(
+            delegate=mediapipe_delegate,
+            task_model_path=mediapipe_task_model,
+        )
     elif backend == "wilor-mini":
         return WiLoRMiniHandTracker()
     else:
@@ -454,9 +581,26 @@ def main():
         choices=["none", "ema", "oneeuro", "kalman"],
         help="Temporal smoothing filter"
     )
+    parser.add_argument(
+        "--mediapipe_delegate",
+        type=str,
+        default="cpu",
+        choices=["cpu", "gpu"],
+        help="MediaPipe delegate. GPU requires the Tasks API and a hand_landmarker.task model.",
+    )
+    parser.add_argument(
+        "--mediapipe_task_model",
+        type=str,
+        default="",
+        help="Path to hand_landmarker.task for MediaPipe Tasks API.",
+    )
     args = parser.parse_args()
 
-    tracker = build_tracker(args.backend)
+    tracker = build_tracker(
+        args.backend,
+        mediapipe_delegate=args.mediapipe_delegate,
+        mediapipe_task_model=args.mediapipe_task_model,
+    )
     filter_manager = MultiHandFilter(args.filter)
     jitter_evaluator = JitterEvaluator() if args.eval_jitter else None
     cap, video_out, output_path, is_test_mode = resolve_video_io(args)

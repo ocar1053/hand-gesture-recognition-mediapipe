@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import os
 import csv
 import copy
 import argparse
@@ -7,6 +8,9 @@ import itertools
 import time
 from collections import Counter
 from collections import deque
+
+os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+os.environ.setdefault('OPENCV_LOG_LEVEL', 'ERROR')
 
 import cv2 as cv
 import numpy as np
@@ -63,6 +67,20 @@ def get_args():
         action='store_true',
         help='Load gesture classifiers (paper/stone/scissor and point history).',
     )
+    parser.add_argument(
+        '--mediapipe_delegate',
+        type=str,
+        default='cpu',
+        choices=['cpu', 'gpu'],
+        help=('MediaPipe delegate. GPU requires the Tasks API and a '
+              'hand_landmarker.task model.'),
+    )
+    parser.add_argument(
+        '--mediapipe_task_model',
+        type=str,
+        default='',
+        help='Path to hand_landmarker.task for MediaPipe Tasks API.',
+    )
 
     args = parser.parse_args()
 
@@ -87,6 +105,8 @@ def main():
     backend = args.backend
     filter_type = args.filter
     gesture_classifier_enable = args.gesture_classifier_enable
+    mediapipe_delegate = args.mediapipe_delegate
+    mediapipe_task_model = args.mediapipe_task_model
 
     use_brect = True
 
@@ -101,6 +121,9 @@ def main():
             max_num_hands=1,
             min_detection_conf=min_detection_confidence,
             min_tracking_conf=min_tracking_confidence,
+            static_image_mode=use_static_image_mode,
+            delegate=mediapipe_delegate,
+            task_model_path=mediapipe_task_model,
         )
     else:
         tracker = WiLoRMiniHandTracker()
