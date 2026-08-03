@@ -40,7 +40,7 @@ def get_args():
                         default=0.7)
     parser.add_argument("--min_tracking_confidence",
                         help='min_tracking_confidence',
-                        type=int,
+                        type=float,
                         default=0.5)
     parser.add_argument('--rosbridge_enable', action='store_true')
     parser.add_argument('--rosbridge_host', type=str, default='localhost')

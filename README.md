@@ -1,150 +1,280 @@
-# hand-gesture-recognition-using-mediapipe
-Estimate hand pose using MediaPipe (Python version).<br> This is a sample 
-program that recognizes hand signs and finger gestures with a simple MLP using the detected key points.
-<br> ❗ _️**This is English Translated version of the [original repo](https://github.com/Kazuhito00/hand-gesture-recognition-using-mediapipe). All Content is translated to english along with comments and notebooks**_ ❗
-<br> 
-![mqlrf-s6x16](https://user-images.githubusercontent.com/37477845/102222442-c452cd00-3f26-11eb-93ec-c387c98231be.gif)
+<div align="center">
 
-This repository contains the following contents.
-* Sample program
-* Hand sign recognition model(TFLite)
-* Finger gesture recognition model(TFLite)
-* Learning data for hand sign recognition and notebook for learning
-* Learning data for finger gesture recognition and notebook for learning
+# Real-Time Hand Gesture Recognition
 
-# Requirements
-* mediapipe 0.8.1
-* OpenCV 3.4.2 or Later
-* Tensorflow 2.3.0 or Later<br>tf-nightly 2.5.0.dev or later (Only when creating a TFLite for an LSTM model)
-* scikit-learn 0.23.2 or Later (Only if you want to display the confusion matrix) 
-* matplotlib 3.3.2 or Later (Only if you want to display the confusion matrix)
+Hand landmark tracking, gesture classification, temporal smoothing, and ROS bridge publishing with MediaPipe or WiLoR-mini.
 
-# Demo
-Here's how to run the demo using your webcam.
-```bash
-python app.py
+[Overview](#overview) &middot; [Quick start](#quick-start) &middot; [Configuration](#configuration) &middot; [ROS bridge](#ros-bridge-output) &middot; [Training](#gesture-models-and-training) &middot; [Troubleshooting](#troubleshooting)
+
+![Hand gesture recognition demo](https://user-images.githubusercontent.com/37477845/102222442-c452cd00-3f26-11eb-93ec-c387c98231be.gif)
+
+</div>
+
+## Overview
+
+This project captures webcam frames, detects the 21 landmarks of a hand, and renders the result in real time with OpenCV. It supports a lightweight MediaPipe backend, an optional WiLoR-mini backend, smoothing filters, TensorFlow Lite gesture classifiers, and JSON landmark publishing through rosbridge.
+
+> [!NOTE]
+> The default `app.py` workflow performs hand tracking only. Add `--gesture_classifier_enable` to load the included hand-sign and point-history classifiers.
+
+## Features
+
+- MediaPipe and WiLoR-mini hand-tracking backends
+- 21-point skeleton rendering with handedness and FPS display
+- `none`, EMA, One Euro, and Kalman temporal filters
+- Optional Paper/Stone/Scissor and motion gesture classification
+- ROS bridge publishing through a configurable host, port, and topic
+- Keyboard-driven training-data collection and Jupyter training notebooks
+- Standalone webcam/video skeleton recording and jitter evaluation
+- MediaPipe CPU and Tasks API GPU modes
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Camera frame] --> B[MediaPipe or WiLoR-mini]
+    B --> C[Raw hand landmarks]
+    C --> D[ROS bridge publisher]
+    C --> E[Temporal filter]
+    E --> F[Gesture classifier]
+    F --> G[OpenCV display]
 ```
 
-The following options can be specified when running the demo.
-* --device<br>Specifying the camera device number (Default：0)
-* --width<br>Width at the time of camera capture (Default：960)
-* --height<br>Height at the time of camera capture (Default：540)
-* --use_static_image_mode<br>Whether to use static_image_mode option for MediaPipe inference (Default：Unspecified)
-* --min_detection_confidence<br>
-Detection confidence threshold (Default：0.5)
-* --min_tracking_confidence<br>
-Tracking confidence threshold (Default：0.5)
+ROS publishing uses the raw tracker output. Smoothing is applied to the landmarks used by the display and gesture pipeline.
 
-# Directory
-<pre>
-│  app.py
-│  keypoint_classification.ipynb
-│  point_history_classification.ipynb
-│  
-├─model
-│  ├─keypoint_classifier
-│  │  │  keypoint.csv
-│  │  │  keypoint_classifier.hdf5
-│  │  │  keypoint_classifier.py
-│  │  │  keypoint_classifier.tflite
-│  │  └─ keypoint_classifier_label.csv
-│  │          
-│  └─point_history_classifier
-│      │  point_history.csv
-│      │  point_history_classifier.hdf5
-│      │  point_history_classifier.py
-│      │  point_history_classifier.tflite
-│      └─ point_history_classifier_label.csv
-│          
-└─utils
-    └─cvfpscalc.py
-</pre>
-### app.py
-This is a sample program for inference.<br>
-In addition, learning data (key points) for hand sign recognition,<br>
-You can also collect training data (index finger coordinate history) for finger gesture recognition.
+## Prerequisites
 
-### keypoint_classification.ipynb
-This is a model training script for hand sign recognition.
+- Python 3.10 or 3.11
+- A webcam or video capture device
+- Git, required to install WiLoR-mini from its repository
+- A running rosbridge WebSocket server when ROS publishing is enabled
 
-### point_history_classification.ipynb
-This is a model training script for finger gesture recognition.
+> [!IMPORTANT]
+> Run commands from the repository root. Model and dataset paths in the application are relative to that directory.
 
-### model/keypoint_classifier
-This directory stores files related to hand sign recognition.<br>
-The following files are stored.
-* Training data(keypoint.csv)
-* Trained model(keypoint_classifier.tflite)
-* Label data(keypoint_classifier_label.csv)
-* Inference module(keypoint_classifier.py)
+> [!NOTE]
+> `requirements.txt` contains the MediaPipe, ROS, and training dependencies. The heavier WiLoR-mini stack is isolated in `requirements-wilor.txt`. MediaPipe is pinned to `0.10.9`.
 
-### model/point_history_classifier
-This directory stores files related to finger gesture recognition.<br>
-The following files are stored.
-* Training data(point_history.csv)
-* Trained model(point_history_classifier.tflite)
-* Label data(point_history_classifier_label.csv)
-* Inference module(point_history_classifier.py)
+## Quick start
 
-### utils/cvfpscalc.py
-This is a module for FPS measurement.
+1. Clone the repository and enter the project directory:
 
-# Training
-Hand sign recognition and finger gesture recognition can add and change training data and retrain the model.
+   ```bash
+   git clone https://github.com/ocar1053/hand-gesture-recognition-mediapipe.git
+   cd hand-gesture-recognition-mediapipe
+   ```
 
-### Hand sign recognition training
-#### 1.Learning data collection
-Press "k" to enter the mode to save key points（displayed as 「MODE:Logging Key Point」）<br>
-<img src="https://user-images.githubusercontent.com/37477845/102235423-aa6cb680-3f35-11eb-8ebd-5d823e211447.jpg" width="60%"><br><br>
-If you press "0" to "9", the key points will be added to "model/keypoint_classifier/keypoint.csv" as shown below.<br>
-1st column: Pressed number (used as class ID), 2nd and subsequent columns: Key point coordinates<br>
-<img src="https://user-images.githubusercontent.com/37477845/102345725-28d26280-3fe1-11eb-9eeb-8c938e3f625b.png" width="80%"><br><br>
-The key point coordinates are the ones that have undergone the following preprocessing up to ④.<br>
-<img src="https://user-images.githubusercontent.com/37477845/102242918-ed328c80-3f3d-11eb-907c-61ba05678d54.png" width="80%">
-<img src="https://user-images.githubusercontent.com/37477845/102244114-418a3c00-3f3f-11eb-8eef-f658e5aa2d0d.png" width="80%"><br><br>
-In the initial state, three types of learning data are included: open hand (class ID: 0), close hand (class ID: 1), and pointing (class ID: 2).<br>
-If necessary, add 3 or later, or delete the existing data of csv to prepare the training data.<br>
-<img src="https://user-images.githubusercontent.com/37477845/102348846-d0519400-3fe5-11eb-8789-2e7daec65751.jpg" width="25%">　<img src="https://user-images.githubusercontent.com/37477845/102348855-d2b3ee00-3fe5-11eb-9c6d-b8924092a6d8.jpg" width="25%">　<img src="https://user-images.githubusercontent.com/37477845/102348861-d3e51b00-3fe5-11eb-8b07-adc08a48a760.jpg" width="25%">
+2. Create and activate a virtual environment:
 
-#### 2.Model training
-Open "[keypoint_classification.ipynb](keypoint_classification.ipynb)" in Jupyter Notebook and execute from top to bottom.<br>
-To change the number of training data classes, change the value of "NUM_CLASSES = 3" <br>and modify the label of "model/keypoint_classifier/keypoint_classifier_label.csv" as appropriate.<br><br>
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
 
-#### X.Model structure
-The image of the model prepared in "[keypoint_classification.ipynb](keypoint_classification.ipynb)" is as follows.
-<img src="https://user-images.githubusercontent.com/37477845/102246723-69c76a00-3f42-11eb-8a4b-7c6b032b7e71.png" width="50%"><br><br>
+   On Windows PowerShell, use `venv\Scripts\Activate.ps1`.
 
-### Finger gesture recognition training
-#### 1.Learning data collection
-Press "h" to enter the mode to save the history of fingertip coordinates (displayed as "MODE:Logging Point History").<br>
-<img src="https://user-images.githubusercontent.com/37477845/102249074-4d78fc80-3f45-11eb-9c1b-3eb975798871.jpg" width="60%"><br><br>
-If you press "0" to "9", the key points will be added to "model/point_history_classifier/point_history.csv" as shown below.<br>
-1st column: Pressed number (used as class ID), 2nd and subsequent columns: Coordinate history<br>
-<img src="https://user-images.githubusercontent.com/37477845/102345850-54ede380-3fe1-11eb-8d04-88e351445898.png" width="80%"><br><br>
-The key point coordinates are the ones that have undergone the following preprocessing up to ④.<br>
-<img src="https://user-images.githubusercontent.com/37477845/102244148-49e27700-3f3f-11eb-82e2-fc7de42b30fc.png" width="80%"><br><br>
-In the initial state, 4 types of learning data are included: stationary (class ID: 0), clockwise (class ID: 1), counterclockwise (class ID: 2), and moving (class ID: 4). <br>
-If necessary, add 5 or later, or delete the existing data of csv to prepare the training data.<br>
-<img src="https://user-images.githubusercontent.com/37477845/102350939-02b0c080-3fe9-11eb-94d8-54a3decdeebc.jpg" width="20%">　<img src="https://user-images.githubusercontent.com/37477845/102350945-05131a80-3fe9-11eb-904c-a1ec573a5c7d.jpg" width="20%">　<img src="https://user-images.githubusercontent.com/37477845/102350951-06444780-3fe9-11eb-98cc-91e352edc23c.jpg" width="20%">　<img src="https://user-images.githubusercontent.com/37477845/102350942-047a8400-3fe9-11eb-9103-dbf383e67bf5.jpg" width="20%">
+3. Install the core dependencies:
 
-#### 2.Model training
-Open "[point_history_classification.ipynb](point_history_classification.ipynb)" in Jupyter Notebook and execute from top to bottom.<br>
-To change the number of training data classes, change the value of "NUM_CLASSES = 4" and <br>modify the label of "model/point_history_classifier/point_history_classifier_label.csv" as appropriate. <br><br>
+   ```bash
+   python -m pip install --upgrade pip
+   python -m pip install -r requirements.txt
+   ```
 
-#### X.Model structure
-The image of the model prepared in "[point_history_classification.ipynb](point_history_classification.ipynb)" is as follows.
-<img src="https://user-images.githubusercontent.com/37477845/102246771-7481ff00-3f42-11eb-8ddf-9e3cc30c5816.png" width="50%"><br>
-The model using "LSTM" is as follows. <br>Please change "use_lstm = False" to "True" when using (tf-nightly required (as of 2020/12/16))<br>
-<img src="https://user-images.githubusercontent.com/37477845/102246817-8368b180-3f42-11eb-9851-23a7b12467aa.png" width="60%">
+   This is enough for the MediaPipe and rosbridge command below. It does not install WiLoR-mini, Chumpy, PyTorch, or Ultralytics.
 
-# Reference
-* [MediaPipe](https://mediapipe.dev/)
+4. Run the application with MediaPipe and rosbridge:
 
-# Author
-Kazuhito Takahashi(https://twitter.com/KzhtTkhs)
+   ```bash
+   python3 app.py --device 0 --rosbridge_enable --backend mediapipe --rosbridge_host localhost
+   ```
 
-# Translation and other improvements
-Nikita Kiselov(https://github.com/kinivi)
- 
-# License 
-hand-gesture-recognition-using-mediapipe is under [Apache v2 license](LICENSE).
+   This opens camera `0`, connects to `ws://localhost:9090`, and publishes hand data to `/mediapipe/hands`. Press `Esc` to exit.
+
+   > [!NOTE]
+   > If rosbridge is unavailable, the application reports the connection error and continues with local hand tracking.
+
+### Common commands
+
+Run MediaPipe without ROS:
+
+```bash
+python3 app.py --device 0 --backend mediapipe
+```
+
+Enable smoothing and the included gesture classifiers:
+
+```bash
+python3 app.py --device 0 --backend mediapipe --filter oneeuro --gesture_classifier_enable
+```
+
+Use WiLoR-mini with Kalman filtering:
+
+```bash
+python3 app.py --device 0 --backend wilor-mini --filter kalman
+```
+
+Install its optional dependencies first:
+
+```bash
+python -m pip install --upgrade setuptools wheel
+python -m pip install --no-build-isolation -r requirements-wilor.txt
+```
+
+> [!IMPORTANT]
+> `--no-build-isolation` is required because Chumpy uses a legacy build script that imports pip during installation. MediaPipe users do not need Chumpy or this workaround.
+
+> [!TIP]
+> For WiLoR-mini with CUDA, install a PyTorch build compatible with your CUDA environment before installing `requirements-wilor.txt`.
+
+Request the MediaPipe Tasks API GPU delegate:
+
+```bash
+python3 app.py --device 0 --backend mediapipe --mediapipe_delegate gpu
+```
+
+The application automatically looks for `hand_landmarker.task` in the repository root. Use `--mediapipe_task_model /path/to/hand_landmarker.task` if the model is stored elsewhere.
+
+> [!WARNING]
+> MediaPipe GPU support depends on the platform and installed runtime. If GPU initialization fails, the application prints the reason and falls back to the MediaPipe Solutions CPU tracker.
+
+## Configuration
+
+Run `python3 app.py --help` to list all options.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--device` | `2` | OpenCV camera device index. Use `0` for the first camera on most systems. |
+| `--width` | `960` | Requested capture width in pixels. |
+| `--height` | `540` | Requested capture height in pixels. |
+| `--use_static_image_mode` | Disabled | Detect each frame independently instead of tracking between frames. |
+| `--min_detection_confidence` | `0.7` | Minimum hand-detection confidence. |
+| `--min_tracking_confidence` | `0.5` | Minimum landmark-tracking confidence. |
+| `--backend` | `mediapipe` | Tracking backend: `mediapipe` or `wilor-mini`. |
+| `--filter` | `none` | Temporal filter: `none`, `ema`, `oneeuro`, or `kalman`. |
+| `--gesture_classifier_enable` | Disabled | Enable the included TensorFlow Lite gesture classifiers. |
+| `--rosbridge_enable` | Disabled | Publish landmark data through rosbridge. |
+| `--rosbridge_host` | `localhost` | rosbridge server hostname or IP address. |
+| `--rosbridge_port` | `9090` | rosbridge WebSocket port. |
+| `--rosbridge_topic` | `/mediapipe/hands` | ROS topic used for hand data. |
+| `--mediapipe_delegate` | `cpu` | MediaPipe delegate: `cpu` or `gpu`. |
+| `--mediapipe_task_model` | Auto-detected | Path to a MediaPipe `hand_landmarker.task` model. |
+
+## ROS bridge output
+
+When `--rosbridge_enable` is set, the application publishes `std_msgs/String` messages containing JSON. The topic defaults to `/mediapipe/hands`.
+
+```json
+{
+  "detected": true,
+  "multi_hand_landmarks": [
+    {
+      "label": "Right",
+      "landmark": [
+        { "x": 0.42, "y": 0.31, "z": -0.01 }
+      ]
+    }
+  ]
+}
+```
+
+Each detected hand contains 21 landmarks. The `x` and `y` coordinates are normalized to the camera frame; `z` is the backend-provided depth when available and `0.0` otherwise. When no hand is detected, `detected` is `false` and `multi_hand_landmarks` is empty.
+
+To publish on a different server or topic:
+
+```bash
+python3 app.py \
+  --device 0 \
+  --backend mediapipe \
+  --rosbridge_enable \
+  --rosbridge_host 192.168.1.20 \
+  --rosbridge_port 9090 \
+  --rosbridge_topic /hand_tracking/landmarks
+```
+
+## Keyboard controls
+
+| Key | Action |
+| --- | --- |
+| `Esc` | Exit the main application. |
+| `n` | Return to normal inference mode. |
+| `k` | Enter keypoint logging mode. |
+| `h` | Enter point-history logging mode. |
+| `0`-`9` | Append a sample with that class ID while a logging mode is active. |
+
+> [!WARNING]
+> Logging writes directly to the CSV datasets. Commit or back up the existing data before collecting a new dataset.
+
+## Gesture models and training
+
+Enable the bundled classifiers with:
+
+```bash
+python3 app.py --device 0 --gesture_classifier_enable
+```
+
+| Classifier | Included labels | Dataset | Training notebook |
+| --- | --- | --- | --- |
+| Hand sign | Paper, Stone, Scissor | `model/keypoint_classifier/keypoint.csv` | `keypoint_classification.ipynb` |
+| Point history | Stop, Clockwise, Counter Clockwise, Move | `model/point_history_classifier/point_history.csv` | `point_history_classification.ipynb` |
+
+Use `k` or `h` to select the dataset, press a digit to record that class ID, then run the corresponding notebook to retrain and export the model. Keep each label CSV in the same class-ID order as its training data.
+
+> [!IMPORTANT]
+> The runtime loads the hand-sign model from `model/keyp/keypoint_classifier.tflite`. After retraining with `keypoint_classification.ipynb`, place the exported TFLite model at that path. The point-history runtime model remains at `model/point_history_classifier/point_history_classifier.tflite`.
+
+## Standalone skeleton recorder
+
+`Gripper_Skeleton/realtime_hand_skeleton.py` provides video recording, offline video processing, FPS display, and jitter evaluation independently of the gesture classifiers.
+
+Run it as a module from the repository root:
+
+```bash
+python3 -m Gripper_Skeleton.realtime_hand_skeleton \
+  --backend mediapipe \
+  --camera_id 0 \
+  --filter ema \
+  --flip \
+  --show_fps
+```
+
+Process a video and report jitter statistics:
+
+```bash
+python3 -m Gripper_Skeleton.realtime_hand_skeleton \
+  --backend mediapipe \
+  --testmode input.mp4 \
+  --filter kalman \
+  --eval_jitter
+```
+
+Webcam runs write `hand_skeleton_output.mp4`. Video runs write a new file beside the input using the selected filter and backend in the filename.
+
+## Project structure
+
+```text
+.
+|-- app.py                              # Main tracking, gestures, and ROS application
+|-- requirements.txt                   # Core MediaPipe, ROS, and training dependencies
+|-- requirements-wilor.txt             # Optional WiLoR-mini dependency stack
+|-- hand_landmarker.task               # MediaPipe Tasks model used by GPU mode
+|-- Gripper_Skeleton/
+|   |-- realtime_hand_skeleton.py      # Standalone recorder and jitter evaluator
+|   `-- filter.py                      # EMA, One Euro, and Kalman filters
+|-- model/
+|   |-- keyp/                          # Runtime hand-sign TFLite model
+|   |-- keypoint_classifier/           # Hand-sign data, labels, models, and module
+|   `-- point_history_classifier/      # Motion data, labels, models, and module
+|-- utils/
+|   |-- cvfpscalc.py                   # FPS calculation
+|   `-- rosbridge_publisher.py         # std_msgs/String JSON publisher
+|-- keypoint_classification.ipynb      # Hand-sign model training
+`-- point_history_classification.ipynb # Point-history model training
+```
+
+## Troubleshooting
+
+- **Camera does not open:** try another `--device` value and verify camera permissions with another OpenCV application.
+- **No ROS messages:** confirm rosbridge is listening on the configured WebSocket host and port, and that subscribers use `std_msgs/String`.
+- **MediaPipe GPU falls back to CPU:** verify `hand_landmarker.task` exists and that the installed MediaPipe runtime supports a GPU delegate on the current platform.
+- **WiLoR-mini is not installed:** install build tools, then run `python -m pip install --no-build-isolation -r requirements-wilor.txt`.
+- **Models or CSV files are not found:** start the command from the repository root so relative paths resolve correctly.

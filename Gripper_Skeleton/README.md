@@ -48,55 +48,26 @@ Joints are displayed as **red points**.
 
 # Installation
 
-Create a Python environment and install dependencies.
+Run installation commands from the repository root.
 
-> Python version: 3.11.3  
-> ⚠️ **Note:** `torch` should be installed according to your **GPU / CUDA version**.  
-> Please check the official installation guide:  
-> https://pytorch.org/get-started/locally/
-
----
-
-## Install PyTorch
-
-### GPU (CUDA)
-
-Example for CUDA 12.8 (GPU 5060 Ti):
+For the MediaPipe backend:
 
 ```bash
-pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements.txt
 ```
 
-Check the correct command for your GPU from:
-
-```
-https://pytorch.org/get-started/locally/
-```
-
----
-
-### CPU Only
+For the optional WiLoR-mini backend:
 
 ```bash
-pip install torch torchvision
+python -m pip install --upgrade setuptools wheel
+python -m pip install --no-build-isolation -r requirements-wilor.txt
 ```
 
----
+> [!IMPORTANT]
+> WiLoR-mini depends on Chumpy, whose legacy build script requires `--no-build-isolation`. MediaPipe does not require Chumpy or the WiLoR dependency file.
 
-## Install Other Dependencies
-
-```bash
-pip install opencv-python
-pip install numpy
-pip install mediapipe
-pip install ultralytics
-pip install git+https://github.com/warmshao/WiLoR-mini
-pip install dill
-pip install timm
-pip install einops
-pip install scipy
-pip install tqdm
-```
+> [!TIP]
+> For CUDA acceleration, install the appropriate PyTorch build before `requirements-wilor.txt`.
 
 ---
 
@@ -105,13 +76,13 @@ pip install tqdm
 ### MediaPipe
 
 ```bash
-python realtime_hand_skeleton.py --backend mediapipe
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --backend mediapipe
 ```
 
 ### WiLoR-mini
 
 ```bash
-python realtime_hand_skeleton.py --backend wilor-mini
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --backend wilor-mini
 ```
 
 ---
@@ -130,16 +101,16 @@ Available options:
 Examples:
 
 ```bash
-python realtime_hand_skeleton.py --backend mediapipe --filter none
-python realtime_hand_skeleton.py --backend mediapipe --filter ema
-python realtime_hand_skeleton.py --backend mediapipe --filter oneeuro
-python realtime_hand_skeleton.py --backend mediapipe --filter kalman
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --backend mediapipe --filter none
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --backend mediapipe --filter ema
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --backend mediapipe --filter oneeuro
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --backend mediapipe --filter kalman
 ```
 
 For offline testing with video input:
 
 ```bash
-python realtime_hand_skeleton.py --backend mediapipe --testmode input.mp4 --filter kalman
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --backend mediapipe --testmode input.mp4 --filter kalman
 ```
 
 ---
@@ -231,26 +202,26 @@ Pinky
 ### Select camera device
 
 ```bash
-python realtime_hand_skeleton.py --camera_id 1
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --camera_id 1
 ```
 
 ### Change resolution  
 (default: `640x360`)
 
 ```bash
-python realtime_hand_skeleton.py --width 1280 --height 720
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --width 1280 --height 720
 ```
 
 ### Mirror camera image
 
 ```bash
-python realtime_hand_skeleton.py --flip
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --flip
 ```
 
 ### Show FPS
 
 ```bash
-python realtime_hand_skeleton.py --show_fps
+python3 -m Gripper_Skeleton.realtime_hand_skeleton --show_fps
 ```
 
 ---
@@ -265,7 +236,7 @@ hand_skeleton_output.mp4
 
 Video settings:
 
-- FPS: **10**
+- FPS: **20**
 - Resolution: same as camera input
 
 Useful for:

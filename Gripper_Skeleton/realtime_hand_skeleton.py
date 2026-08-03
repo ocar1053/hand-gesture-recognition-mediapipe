@@ -5,51 +5,8 @@ from typing import List, Tuple
 
 import cv2
 import numpy as np
-import torch
-import torch.serialization
-from ultralytics.nn.tasks import PoseModel
-import ultralytics.nn.modules.conv
-import ultralytics.nn.modules.block
-import ultralytics.nn.modules.head
-import ultralytics.utils
-import ultralytics.utils.loss
-import ultralytics.utils.tal
-import dill
 
 from .filter import MultiHandFilter
-
-torch.serialization.add_safe_globals([
-    PoseModel,
-    dill._dill._load_type,
-    torch.nn.modules.container.Sequential,
-    ultralytics.nn.modules.conv.Conv,
-    ultralytics.nn.modules.block.C2f,
-    ultralytics.nn.modules.block.C3,
-    ultralytics.nn.modules.block.C2,
-    ultralytics.nn.modules.block.SPPF,
-    ultralytics.nn.modules.head.Detect,
-    torch.nn.modules.conv.Conv2d,
-    torch.nn.modules.batchnorm.BatchNorm2d,
-    torch.nn.modules.activation.SiLU,
-    torch.nn.modules.container.ModuleList,
-    ultralytics.nn.modules.block.Bottleneck,
-    torch.nn.modules.pooling.MaxPool2d,
-    torch.nn.modules.upsampling.Upsample,
-    ultralytics.nn.modules.conv.Concat,
-    ultralytics.nn.modules.head.Pose,
-    ultralytics.nn.modules.block.DFL,
-    getattr,
-    ultralytics.utils.IterableSimpleNamespace,
-    ultralytics.utils.loss.v8PoseLoss,
-    torch.nn.modules.loss.BCEWithLogitsLoss,
-    ultralytics.utils.tal.TaskAlignedAssigner,
-    ultralytics.nn.tasks.DetectionModel,
-    slice,
-    range,
-    tuple,
-    ultralytics.utils.loss.BboxLoss,
-    ultralytics.utils.loss.KeypointLoss
-])
 
 # -----------------------------
 # Shared hand connections (21 keypoints)
@@ -447,17 +404,14 @@ class MediaPipeHandTracker:
 
 class WiLoRMiniHandTracker:
     def __init__(self):
-        import torch
-        from wilor_mini.pipelines.wilor_hand_pose3d_estimation_pipeline import (
-            WiLorHandPose3dEstimationPipeline,
-        )
+        torch, pipeline_class = _load_wilor_dependencies()
 
         self.torch = torch
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
         self.dtype = torch.float16 if self.device.type == "cuda" else torch.float32
 
-        self.pipe = WiLorHandPose3dEstimationPipeline(
+        self.pipe = pipeline_class(
             device=self.device,
             dtype=self.dtype,
             verbose=False,
@@ -493,6 +447,65 @@ class WiLoRMiniHandTracker:
 
     def close(self):
         pass
+
+
+def _load_wilor_dependencies():
+    try:
+        import dill
+        import torch
+        import torch.serialization
+        import ultralytics.nn.modules.block
+        import ultralytics.nn.modules.conv
+        import ultralytics.nn.modules.head
+        import ultralytics.utils
+        import ultralytics.utils.loss
+        import ultralytics.utils.tal
+        from ultralytics.nn.tasks import PoseModel
+        from wilor_mini.pipelines.wilor_hand_pose3d_estimation_pipeline import (
+            WiLorHandPose3dEstimationPipeline,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "WiLoR-mini dependencies are not installed. Install build tools "
+            "with `python -m pip install --upgrade setuptools wheel`, then run "
+            "`python -m pip install --no-build-isolation "
+            "-r requirements-wilor.txt`."
+        ) from exc
+
+    torch.serialization.add_safe_globals([
+        PoseModel,
+        dill._dill._load_type,
+        torch.nn.modules.container.Sequential,
+        ultralytics.nn.modules.conv.Conv,
+        ultralytics.nn.modules.block.C2f,
+        ultralytics.nn.modules.block.C3,
+        ultralytics.nn.modules.block.C2,
+        ultralytics.nn.modules.block.SPPF,
+        ultralytics.nn.modules.head.Detect,
+        torch.nn.modules.conv.Conv2d,
+        torch.nn.modules.batchnorm.BatchNorm2d,
+        torch.nn.modules.activation.SiLU,
+        torch.nn.modules.container.ModuleList,
+        ultralytics.nn.modules.block.Bottleneck,
+        torch.nn.modules.pooling.MaxPool2d,
+        torch.nn.modules.upsampling.Upsample,
+        ultralytics.nn.modules.conv.Concat,
+        ultralytics.nn.modules.head.Pose,
+        ultralytics.nn.modules.block.DFL,
+        getattr,
+        ultralytics.utils.IterableSimpleNamespace,
+        ultralytics.utils.loss.v8PoseLoss,
+        torch.nn.modules.loss.BCEWithLogitsLoss,
+        ultralytics.utils.tal.TaskAlignedAssigner,
+        ultralytics.nn.tasks.DetectionModel,
+        slice,
+        range,
+        tuple,
+        ultralytics.utils.loss.BboxLoss,
+        ultralytics.utils.loss.KeypointLoss,
+    ])
+
+    return torch, WiLorHandPose3dEstimationPipeline
 
 
 def build_tracker(

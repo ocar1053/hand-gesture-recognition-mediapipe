@@ -1,0 +1,19 @@
+# Optional WiLoR-mini backend
+#
+# Chumpy uses a legacy setup script that requires pip's current environment.
+# Install this file with:
+#   python -m pip install --upgrade setuptools wheel
+#   python -m pip install --no-build-isolation -r requirements-wilor.txt
+
+-r requirements.txt
+
+torch>=2.0,<=2.5
+torchvision>=0.15.1
+ultralytics==8.1.34
+dill
+timm
+einops
+scipy
+tqdm
+chumpy @ git+https://github.com/mattloper/chumpy
+wilor-mini @ git+https://github.com/warmshao/WiLoR-mini
